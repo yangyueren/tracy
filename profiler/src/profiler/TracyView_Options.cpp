@@ -32,7 +32,7 @@ void View::DrawOptions()
 {
     static bool default_markers_active = false;
 
-    ImGui::Begin( "Options", &m_showOptions, ImGuiWindowFlags_AlwaysAutoResize );
+    ImGui::Begin( "Options", &m_showOptions );
     if( ImGui::GetCurrentWindowRead()->SkipItems ) { ImGui::End(); return; }
 
     const auto scale = GetScale();
@@ -617,7 +617,7 @@ void View::DrawOptions()
 
         ImGui::SameLine();
         int pH = m_vd.plotHeight;
-        ImGui::SliderInt("Plot heights", &pH, 30, 200);
+        ImGui::SliderInt("Plot heights", &pH, 10, 200);
         m_vd.plotHeight = pH;
         DefaultMarker(default_markers_active);
 
@@ -652,13 +652,183 @@ void View::DrawOptions()
                 }
             }
 
+            // Prepare plots list for display (sorted or original order)
+            ImGui::SameLine();
+            if( ImGui::SmallButton( "Sort by name" ) )
+            {
+                m_plotsSortMode = 1;
+            }
+            ImGui::SameLine();
+            if( ImGui::SmallButton( "Sort by avg" ) )
+            {
+                m_plotsSortMode = 2;
+            }
+
+            // Build and sort the list based on current sort mode
+            m_plotsList.clear();
             for( const auto& p : m_worker.GetPlots() )
+            {
+                m_plotsList.push_back( p );
+            }
+
+            if( m_plotsSortMode == 1 )
+            {
+                // Sort by name (handle plots with name == 0)
+                pdqsort_branchless( m_plotsList.begin(), m_plotsList.end(), [this] ( const auto& lhs, const auto& rhs ) {
+                    const char* lhsName = lhs->name == 0 ? "" : m_worker.GetString( lhs->name );
+                    const char* rhsName = rhs->name == 0 ? "" : m_worker.GetString( rhs->name );
+                    if( lhsName == nullptr ) lhsName = "";
+                    if( rhsName == nullptr ) rhsName = "";
+                    return strcmp( lhsName, rhsName ) < 0;
+                } );
+            }
+            else if( m_plotsSortMode == 2 )
+            {
+                // Sort by average value (descending)
+                pdqsort_branchless( m_plotsList.begin(), m_plotsList.end(), [] ( const auto& lhs, const auto& rhs ) {
+                    const auto lhsAvg = lhs->data.size() > 0 ? lhs->sum / lhs->data.size() : 0.0;
+                    const auto rhsAvg = rhs->data.size() > 0 ? rhs->sum / rhs->data.size() : 0.0;
+                    return lhsAvg > rhsAvg;
+                } );
+            }
+
+            // Helper function to get plot display name
+            auto getPlotLabel = [this]( const PlotData* plot ) -> const char* {
+                static char tmpLabel[1024];
+                switch( plot->type )
+                {
+                case PlotType::User:
+                    return m_worker.GetString( plot->name );
+                case PlotType::Memory:
+                    if( plot->name == 0 )
+                    {
+                        return ICON_FA_MEMORY " Memory usage";
+                    }
+                    else
+                    {
+                        sprintf( tmpLabel, ICON_FA_MEMORY " %s", m_worker.GetString( plot->name ) );
+                        return tmpLabel;
+                    }
+                case PlotType::SysTime:
+                    return ICON_FA_GAUGE_HIGH " CPU usage";
+                case PlotType::Power:
+                    sprintf( tmpLabel, ICON_FA_BOLT " %s", m_worker.GetString( plot->name ) );
+                    return tmpLabel;
+                default:
+                    return "";
+                }
+            };
+
+            // Find the maximum label width for alignment
+            float maxLabelWidth = 0;
+            for( const auto& p : m_plotsList )
+            {
+                const char* label = getPlotLabel( p );
+                const auto labelSize = ImGui::CalcTextSize( label );
+                if( labelSize.x > maxLabelWidth ) maxLabelWidth = labelSize.x;
+            }
+
+            for( const auto& p : m_plotsList )
             {
                 SmallColorBox( GetPlotColor( *p, m_worker ) );
                 ImGui::SameLine();
                 m_tc.GetItem( p ).VisibilityCheckbox();
                 ImGui::SameLine();
-                ImGui::TextDisabled( "%s data points", RealToString( p->data.size() ) );
+
+                // Calculate padding for alignment
+                const char* label = getPlotLabel( p );
+                const auto labelWidth = ImGui::CalcTextSize( label ).x;
+                const auto spaceWidth = ImGui::CalcTextSize( " " ).x;
+                const int numSpaces = int( ( maxLabelWidth - labelWidth ) / spaceWidth ) + 3;
+
+                char padding[128];
+                padding[0] = '\0';
+                for( int i = 0; i < numSpaces && i < 127; i++ )
+                {
+                    padding[i] = ' ';
+                    padding[i + 1] = '\0';
+                }
+
+                // Display avg, min, max, counts
+                const auto dataPoints = p->data.size();
+                if( dataPoints == 0 )
+                {
+                    char buf[256];
+                    sprintf( buf, "%s(no data)", padding );
+                    ImGui::TextDisabled( "%s", buf );
+                }
+                else
+                {
+                    const auto avg = p->sum / dataPoints;
+                    char buf[512];
+                    char avgBuf[64], minBuf[64], maxBuf[64];
+
+                    if( p->format == PlotValueFormatting::Number )
+                    {
+                        // Format as time units (ns -> s/ms/us/ns)
+                        if( avg >= 1000000000.0 ) {
+                            sprintf( avgBuf, "%.1fs", avg / 1000000000.0 );
+                        } else if( avg >= 1000000.0 ) {
+                            sprintf( avgBuf, "%.1fms", avg / 1000000.0 );
+                        } else if( avg >= 1000.0 ) {
+                            sprintf( avgBuf, "%.1fus", avg / 1000.0 );
+                        } else {
+                            sprintf( avgBuf, "%.1fns", avg );
+                        }
+
+                        if( p->min >= 1000000000.0 ) {
+                            sprintf( minBuf, "%.1fs", p->min / 1000000000.0 );
+                        } else if( p->min >= 1000000.0 ) {
+                            sprintf( minBuf, "%.1fms", p->min / 1000000.0 );
+                        } else if( p->min >= 1000.0 ) {
+                            sprintf( minBuf, "%.1fus", p->min / 1000.0 );
+                        } else {
+                            sprintf( minBuf, "%.1fns", p->min );
+                        }
+
+                        if( p->max >= 1000000000.0 ) {
+                            sprintf( maxBuf, "%.1fs", p->max / 1000000000.0 );
+                        } else if( p->max >= 1000000.0 ) {
+                            sprintf( maxBuf, "%.1fms", p->max / 1000000.0 );
+                        } else if( p->max >= 1000.0 ) {
+                            sprintf( maxBuf, "%.1fus", p->max / 1000.0 );
+                        } else {
+                            sprintf( maxBuf, "%.1fns", p->max );
+                        }
+
+                        sprintf( buf, "%savg: %7s,  min: %7s,  max: %7s,  n=%7s", padding, avgBuf, minBuf, maxBuf, RealToString( dataPoints ) );
+                    }
+                    else if( p->format == PlotValueFormatting::Memory )
+                    {
+                        sprintf( avgBuf, "%s", MemSizeToString( int64_t( avg ) ) );
+                        sprintf( minBuf, "%s", MemSizeToString( int64_t( p->min ) ) );
+                        sprintf( maxBuf, "%s", MemSizeToString( int64_t( p->max ) ) );
+                        sprintf( buf, "%savg: %7s,  min: %7s,  max: %7s,  n=%7s", padding, avgBuf, minBuf, maxBuf, RealToString( dataPoints ) );
+                    }
+                    else if( p->format == PlotValueFormatting::Percentage )
+                    {
+                        sprintf( avgBuf, "%.2f%%", avg );
+                        sprintf( minBuf, "%.2f%%", p->min );
+                        sprintf( maxBuf, "%.2f%%", p->max );
+                        sprintf( buf, "%savg: %7s,  min: %7s,  max: %7s,  n=%7s", padding, avgBuf, minBuf, maxBuf, RealToString( dataPoints ) );
+                    }
+                    else if( p->format == PlotValueFormatting::Watt )
+                    {
+                        sprintf( avgBuf, "%.2fW", avg );
+                        sprintf( minBuf, "%.2fW", p->min );
+                        sprintf( maxBuf, "%.2fW", p->max );
+                        sprintf( buf, "%savg: %7s,  min: %7s,  max: %7s,  n=%7s", padding, avgBuf, minBuf, maxBuf, RealToString( dataPoints ) );
+                    }
+                    else
+                    {
+                        sprintf( avgBuf, "%.2f", avg );
+                        sprintf( minBuf, "%.2f", p->min );
+                        sprintf( maxBuf, "%.2f", p->max );
+                        sprintf( buf, "%savg: %7s,  min: %7s,  max: %7s,  n=%7s", padding, avgBuf, minBuf, maxBuf, RealToString( dataPoints ) );
+                    }
+
+                    ImGui::TextDisabled( "%s", buf );
+                }
             }
             ImGui::TreePop();
         }

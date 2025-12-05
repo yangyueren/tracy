@@ -95,8 +95,123 @@ void TimelineItemPlot::HeaderExtraContents( const TimelineContext& ctx, int offs
     auto draw = ImGui::GetWindowDrawList();
     const auto ty = ImGui::GetTextLineHeight();
 
-    char tmp[128];
-    sprintf( tmp, "(y-range: %s, visible data points: %s)", FormatPlotValue( m_plot->rMax - m_plot->rMin, m_plot->format ), RealToString( m_plot->num ) );
+    // Find the maximum label width among all plots for alignment
+    float maxLabelWidth = labelWidth;
+    for( const auto& p : m_worker.GetPlots() )
+    {
+        const char* plotLabel = nullptr;
+        static char tmpLabel[1024];
+        switch( p->type )
+        {
+        case PlotType::User:
+            plotLabel = m_worker.GetString( p->name );
+            break;
+        case PlotType::Memory:
+            if( p->name == 0 )
+            {
+                plotLabel = ICON_FA_MEMORY " Memory usage";
+            }
+            else
+            {
+                sprintf( tmpLabel, ICON_FA_MEMORY " %s", m_worker.GetString( p->name ) );
+                plotLabel = tmpLabel;
+            }
+            break;
+        case PlotType::SysTime:
+            plotLabel = ICON_FA_GAUGE_HIGH " CPU usage";
+            break;
+        case PlotType::Power:
+            sprintf( tmpLabel, ICON_FA_BOLT " %s", m_worker.GetString( p->name ) );
+            plotLabel = tmpLabel;
+            break;
+        default:
+            break;
+        }
+        if( plotLabel )
+        {
+            const auto labelSize = ImGui::CalcTextSize( plotLabel );
+            if( labelSize.x > maxLabelWidth ) maxLabelWidth = labelSize.x;
+        }
+    }
+
+    // Calculate padding spaces needed for alignment
+    const int numSpaces = int( ( maxLabelWidth - labelWidth ) / ImGui::CalcTextSize( " " ).x ) + 3;
+
+    char tmp[512];
+    char padding[128];
+    padding[0] = '\0';
+    for( int i = 0; i < numSpaces && i < 127; i++ )
+    {
+        padding[i] = ' ';
+        padding[i + 1] = '\0';
+    }
+
+    const auto dataPoints = m_plot->data.size();
+
+    if( dataPoints == 0 )
+    {
+        sprintf( tmp, "%s(no data)", padding );
+    }
+    else
+    {
+        const auto avg = m_plot->sum / dataPoints;
+
+        // Helper function to format time value (assuming ns input)
+        auto formatTimeValue = [](double ns, char* buf) {
+            if( ns >= 1000000000.0 ) {
+                sprintf( buf, "%.1fs", ns / 1000000000.0 );
+            } else if( ns >= 1000000.0 ) {
+                sprintf( buf, "%.1fms", ns / 1000000.0 );
+            } else if( ns >= 1000.0 ) {
+                sprintf( buf, "%.1fus", ns / 1000.0 );
+            } else {
+                sprintf( buf, "%.1fns", ns );
+            }
+        };
+
+        char avgBuf[64], minBuf[64], maxBuf[64];
+
+        if( m_plot->format == PlotValueFormatting::Number )
+        {
+            // For Number format, assume ns and convert to appropriate time unit
+            formatTimeValue( avg, avgBuf );
+            formatTimeValue( m_plot->min, minBuf );
+            formatTimeValue( m_plot->max, maxBuf );
+        }
+        else if( m_plot->format == PlotValueFormatting::Memory )
+        {
+            // For Memory format, use MemSizeToString
+            sprintf( avgBuf, "%s", MemSizeToString( int64_t( avg ) ) );
+            sprintf( minBuf, "%s", MemSizeToString( int64_t( m_plot->min ) ) );
+            sprintf( maxBuf, "%s", MemSizeToString( int64_t( m_plot->max ) ) );
+        }
+        else if( m_plot->format == PlotValueFormatting::Percentage )
+        {
+            // For Percentage format
+            sprintf( avgBuf, "%.2f%%", avg );
+            sprintf( minBuf, "%.2f%%", m_plot->min );
+            sprintf( maxBuf, "%.2f%%", m_plot->max );
+        }
+        else if( m_plot->format == PlotValueFormatting::Watt )
+        {
+            // For Watt format
+            sprintf( avgBuf, "%.2f W", avg );
+            sprintf( minBuf, "%.2f W", m_plot->min );
+            sprintf( maxBuf, "%.2f W", m_plot->max );
+        }
+        else
+        {
+            // Fallback for unknown formats
+            sprintf( avgBuf, "%.2f", avg );
+            sprintf( minBuf, "%.2f", m_plot->min );
+            sprintf( maxBuf, "%.2f", m_plot->max );
+        }
+
+        // Use fixed-width formatting for alignment (7 chars per value, right-aligned)
+        sprintf( tmp, "%savg: %7s,   min: %7s,   max: %7s,   count: %7s",
+                 padding, avgBuf, minBuf, maxBuf, RealToString( dataPoints ) );
+    }
+
     draw->AddText( ctx.wpos + ImVec2( ty * 1.5f + labelWidth, offset ), 0xFF226E6E, tmp );
 }
 

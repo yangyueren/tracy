@@ -201,11 +201,12 @@ bool View::DrawPlot( const TimelineContext& ctx, PlotData& plot, const std::vect
             }
         }
 
-        auto tmp = FormatPlotValue( plot.rMax, plot.format );
-        DrawTextSuperContrast( draw, wpos + ImVec2( 0, offset ), color, tmp );
+        // Don't display min/max values on plot
+        // auto tmp = FormatPlotValue( plot.rMax, plot.format );
+        // DrawTextSuperContrast( draw, wpos + ImVec2( 0, offset ), color, tmp );
         offset += PlotHeight - ty;
-        tmp = FormatPlotValue( plot.rMin, plot.format );
-        DrawTextSuperContrast( draw, wpos + ImVec2( 0, offset ), color, tmp );
+        // tmp = FormatPlotValue( plot.rMin, plot.format );
+        // DrawTextSuperContrast( draw, wpos + ImVec2( 0, offset ), color, tmp );
 
         DrawLine( draw, dpos + ImVec2( 0, offset + ty - 1 ), dpos + ImVec2( w, offset + ty - 1 ), 0xFF226E6E );
         offset += ty;
